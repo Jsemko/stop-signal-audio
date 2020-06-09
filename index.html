@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="jspsych.js"></script>
+  <script src="plugins/jspsych-fullscreen.js"></script>
+  <script src="plugins/jspsych-html-keyboard-response.js"></script>
+  <script src="plugins/jspsych-call-function.js"></script>
+  <script src="plugins/stop-signal-audio.js"></script>
+  <script src="plugins/jspsych-instructions.js"></script>
+  <link rel="stylesheet" href="css/jspsych.css"></link>
+</head>
+<body></body>
+<script>
+  const FIXATION_CROSS_DELAY = 1000;
+  const BLANK_DELAY = 1000;
+  const TRIAL_LENGTH = 1500;
+  const INTIAL_STOP_SIGNAL_DELAY = 250;
+  const STOP_SIGNAL_ADJUSTMENT= 30;
+
+  const PRACTICE_TRIALS_OF_EACH_TYPE = 2;
+  // If no extra practice, use -1.0
+  const PERCENTAGE_REQUIRED_TO_COMPLETE_PRACTICE = 0.5
+
+
+  var tone = 'audio/tone_750hz_75ms.wav';
+  var food_images = [
+    'images/hamburger.jpeg',
+    'images/hotdog.jpeg',
+  ]
+  var non_food_images = [
+    'images/house.jpeg',
+    'images/house2.jpeg',
+  ]
+
+  // global variable so that we can maintain state among trials.
+  var stop_signal_delay_obj = {
+    food: INTIAL_STOP_SIGNAL_DELAY,
+    non_food: INTIAL_STOP_SIGNAL_DELAY,
+  }
+
+  var fullscreen_trial = {
+    type: 'fullscreen',
+    fullscreen_mode: true
+  }
+
+  var stimulus_type_to_key = {
+    food: 'M',
+    non_food: 'Z',
+  }
+  var stimulus_type_to_ascii = {
+    food: 77,
+    non_food: 90,
+  }
+
+  var instruction_pages = {
+    type: 'instructions',
+    pages: [
+      "This is the instruction page.",
+      `You will be responding to some stimuli. <p>You will press
+      ${stimulus_type_to_key.food} for food images, and
+      ${stimulus_type_to_key.non_food} for non-food images`
+    ],
+    show_clickable_nav: true,
+    show_page_number: true,
+  }
+
+  var trial_instruction_pages = {
+    type: 'instructions',
+    pages: [
+      "You will be responding to some real stimuli."
+    ],
+    show_clickable_nav: true,
+    show_page_number: true,
+  }
+
+  var html_no_response_t = {
+    type: 'html-keyboard-response',
+    choices: jsPsych.NO_KEYS,
+  }
+
+  var fixation_cross = {
+    ...html_no_response_t,
+    stimulus: '<font size=30>+</font>',
+    trial_duration: FIXATION_CROSS_DELAY,
+  }
+
+  var blank = {
+    ...html_no_response_t,
+    stimulus: '',
+    trial_duration: BLANK_DELAY,
+  }
+
+  var stop_signal_audio_t = {
+    type: 'stop-signal-audio',
+    tone: tone,
+    choices: [stimulus_type_to_key.food, stimulus_type_to_key.non_food],
+    stimulus: jsPsych.timelineVariable('image'),
+    is_stop_trial: jsPsych.timelineVariable('is_stop_trial'),
+    stimulus_type: jsPsych.timelineVariable('stimulus_type'),
+    trial_duration: TRIAL_LENGTH,
+    stop_signal_adjustment: STOP_SIGNAL_ADJUSTMENT,
+    stimulus_height: 200,
+  }
+
+  // In order to possible redo practice blocks, depending on performance,
+  // we have a list of images which will be drawn from at each step. The
+  // stimulus must be extracted via a function.
+  var practice_sample_images = []
+  var practice_image_types = []
+  var get_new_practice_samples = () => {
+    food_objs = jsPsych.randomization.sampleWithReplacement(food_images, PRACTICE_TRIALS_OF_EACH_TYPE).map(
+      (e, i) => [e, 'food'])
+    non_food_objs = jsPsych.randomization.sampleWithReplacement(non_food_images, PRACTICE_TRIALS_OF_EACH_TYPE).map(
+      (e, i) => [e, 'non_food'])
+    practice_objs = jsPsych.randomization.shuffle(food_objs.concat(non_food_objs))
+    for(practice_obj of practice_objs) {
+      practice_sample_images.push(practice_obj[0]);
+      practice_image_types.push(practice_obj[1]);
+    };
+  }
+  // Generate the initial practice block images.
+  get_new_practice_samples();
+
+  var get_image_for_repeat = () => practice_sample_images.pop();
+  var get_image_type_for_repeat = () => practice_image_types.pop();
+
+  var practice_for_repeat = {
+    timeline: [
+      fixation_cross,
+      {
+        ...stop_signal_audio_t,
+        stimulus: get_image_for_repeat,
+        stimulus_type: get_image_type_for_repeat,
+      },
+      blank],
+    // Fill in empty array so that the practice trial runs the appropriate
+    // number of times.
+    timeline_variables: Array(PRACTICE_TRIALS_OF_EACH_TYPE * 2).fill({}),
+    loop_function: (data) => {
+      stop_signal_data = data.filter({trial_type: "stop-signal-audio"});
+      response_keys = stop_signal_data.select('key_press').values;
+      stimulus_types = stop_signal_data.select('stimulus_type').values;
+      n_correct = (response_keys
+        .map((e, i) => e == stimulus_type_to_ascii[stimulus_types[i]] ? 1 : 0)
+        .reduce((a, b) => a + b, 0)
+      );
+      percent_correct = n_correct / stimulus_types.length;
+      console.log(`You got ${(percent_correct * 100).toFixed(2)}% correct`);
+      if(percent_correct > PERCENTAGE_REQUIRED_TO_COMPLETE_PRACTICE) {
+        return false;
+      }
+      get_new_practice_samples();
+      return true;
+    }
+  }
+
+  // For the main trials, we do not need to repeat so no need to re-randomize.
+  var single_trial_timeline = [
+    fixation_cross,
+    stop_signal_audio_t,
+    blank,
+  ]
+
+  var trial_block_1 = {
+    timeline: single_trial_timeline,
+    timeline_variables: stop_signal_utils.shuffled_timelines([
+      {size:2, images: food_images, is_stop_trial: true, stimulus_type: "food"},
+      {size:2, images: food_images, is_stop_trial: false, stimulus_type: "food"},
+      {size:2, images: non_food_images, is_stop_trial: true, stimulus_type: "non_food"},
+      {size:2, images: non_food_images, is_stop_trial: false, stimulus_type: "non_food"},
+    ])
+  }
+
+  var reset_ssd = {
+    type: 'call-function',
+    func: function() {
+      for(stimulus_type in window.stop_signal_delay_obj){
+        window.stop_signal_delay_obj[stimulus_type] = INTIAL_STOP_SIGNAL_DELAY;
+      }
+    },
+  }
+
+  jsPsych.init({
+    timeline: [
+      //fullscreen_trial,
+      instruction_pages,
+      practice_for_repeat,
+      trial_instruction_pages,
+      trial_block_1,
+      reset_ssd,
+      ],
+    use_webaudio: false,
+    preload_audio: [tone],
+    preload_images: food_images.concat(non_food_images),
+    on_finish: () => { jsPsych.data.displayData(); },
+    // No time in between trials due to fixation cross.
+    default_iti: 0
+  });
+</script>
+
+</html>
